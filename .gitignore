@@ -1,0 +1,10 @@
+# Certificats i claus privades
+config/wazuh_indexer_ssl_certs/
+config/wireguard/wg_confs/*.conf
+
+# Arxius temporals
+*.log
+*.tmp
+
+# Volums Docker
+volumes/
