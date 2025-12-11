@@ -1,0 +1,21 @@
+# Environment
+.env
+
+# WireGuard config (conté claus privades)
+config/wireguard/wg0.conf
+config/wireguard/*.conf
+
+# Logs
+*.log
+
+# Backups
+*.tar.gz
+*.zip
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
