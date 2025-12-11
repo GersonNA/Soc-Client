@@ -18,32 +18,127 @@ services:
     sysctls:
       - net.ipv4.conf.all.src_valid_mark=1
       - net.ipv4.ip_forward=1
+    ports:
+      - "51820:51820/udp"
     restart: unless-stopped
     networks:
       - soc-client-net
 
   # ═══════════════════════════════════════════════════════
-  # ZABBIX AGENT - Monitorització infraestructura
+  # ZABBIX PROXY - Agregador local d'agents
   # ═══════════════════════════════════════════════════════
-  zabbix-agent:
-    image: zabbix/zabbix-agent2:alpine-7.0-latest
-    container_name: soc-client-zabbix-agent
+  zabbix-proxy:
+    image: zabbix/zabbix-proxy-sqlite3:alpine-7.0-latest
+    container_name: soc-client-zabbix-proxy
     environment:
-      - ZBX_HOSTNAME=${ZABBIX_AGENT_HOSTNAME:-soc-client}
+      - ZBX_PROXYMODE=0
+      - ZBX_HOSTNAME=${ZABBIX_PROXY_HOSTNAME:-soc-client-proxy}
       - ZBX_SERVER_HOST=${ZABBIX_SERVER:-10.0.0.1}
       - ZBX_SERVER_PORT=${ZABBIX_SERVER_PORT:-10051}
-      - ZBX_PASSIVE_ALLOW=${ZABBIX_PASSIVE_ALLOW:-true}
-      - ZBX_ACTIVE_ALLOW=${ZABBIX_ACTIVE_ALLOW:-true}
-      - ZBX_TIMEOUT=${ZABBIX_TIMEOUT:-30}
+      - ZBX_ENABLEREMOTECOMMANDS=1
+      - ZBX_LOGREMOTECOMMANDS=1
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /:/hostfs:ro
-    privileged: true
+      - zabbix-proxy-data:/var/lib/zabbix
+    ports:
+      - "10051:10051"
     restart: unless-stopped
     depends_on:
       - wireguard
-    network_mode: "service:wireguard"
+    networks:
+      - soc-client-net
+
+  # ═══════════════════════════════════════════════════════
+  # WAZUH INDEXER - OpenSearch per logs locals
+  # ═══════════════════════════════════════════════════════
+  wazuh-indexer:
+    image: wazuh/wazuh-indexer:4.7.2
+    container_name: soc-client-wazuh-indexer
+    environment:
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "bootstrap.memory_lock=true"
+      - "discovery.type=single-node"
+      - "network.host=0.0.0.0"
+      - "DISABLE_INSTALL_DEMO_CONFIG=true"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - wazuh-indexer-data:/var/lib/wazuh-indexer
+      - ./config/wazuh-indexer/certs:/usr/share/wazuh-indexer/certs
+    restart: unless-stopped
+    networks:
+      - soc-client-net
+
+  # ═══════════════════════════════════════════════════════
+  # WAZUH MANAGER - Agregador local d'agents
+  # ═══════════════════════════════════════════════════════
+  wazuh-manager:
+    image: wazuh/wazuh-manager:4.7.2
+    container_name: soc-client-wazuh-manager
+    environment:
+      - INDEXER_URL=https://wazuh-indexer:9200
+      - INDEXER_USERNAME=admin
+      - INDEXER_PASSWORD=${WAZUH_INDEXER_PASSWORD:-SecretPassword}
+      - FILEBEAT_SSL_VERIFICATION_MODE=none
+      - SSL_CERTIFICATE_AUTHORITIES=/etc/ssl/root-ca.pem
+      - SSL_CERTIFICATE=/etc/ssl/filebeat.pem
+      - SSL_KEY=/etc/ssl/filebeat.key
+      - API_USERNAME=${WAZUH_API_USERNAME:-wazuh-wui}
+      - API_PASSWORD=${WAZUH_API_PASSWORD:-MyS3cr37P450r.*-}
+    volumes:
+      - wazuh-manager-data:/var/ossec/data
+      - wazuh-manager-logs:/var/ossec/logs
+      - wazuh-manager-etc:/var/ossec/etc
+      - ./config/wazuh-manager/certs:/etc/ssl:ro
+    ports:
+      - "1514:1514"
+      - "1515:1515"
+      - "55000:55000"
+    restart: unless-stopped
+    depends_on:
+      - wazuh-indexer
+      - wireguard
+    networks:
+      - soc-client-net
+
+  # ═══════════════════════════════════════════════════════
+  # WAZUH DASHBOARD - Interface web local (opcional)
+  # ═══════════════════════════════════════════════════════
+  wazuh-dashboard:
+    image: wazuh/wazuh-dashboard:4.7.2
+    container_name: soc-client-wazuh-dashboard
+    environment:
+      - INDEXER_USERNAME=admin
+      - INDEXER_PASSWORD=${WAZUH_INDEXER_PASSWORD:-SecretPassword}
+      - WAZUH_API_URL=https://wazuh-manager
+      - DASHBOARD_USERNAME=${WAZUH_DASHBOARD_USERNAME:-kibanaserver}
+      - DASHBOARD_PASSWORD=${WAZUH_DASHBOARD_PASSWORD:-kibanaserver}
+      - API_USERNAME=${WAZUH_API_USERNAME:-wazuh-wui}
+      - API_PASSWORD=${WAZUH_API_PASSWORD:-MyS3cr37P450r.*-}
+    volumes:
+      - ./config/wazuh-dashboard/certs:/usr/share/wazuh-dashboard/certs
+      - ./config/wazuh-dashboard/config/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml
+      - ./config/wazuh-dashboard/config/wazuh.yml:/usr/share/wazuh-dashboard/config/wazuh.yml
+    ports:
+      - "443:5601"
+    restart: unless-stopped
+    depends_on:
+      - wazuh-indexer
+      - wazuh-manager
+    networks:
+      - soc-client-net
 
 networks:
   soc-client-net:
     driver: bridge
+
+volumes:
+  zabbix-proxy-data:
+  wazuh-indexer-data:
+  wazuh-manager-data:
+  wazuh-manager-logs:
+  wazuh-manager-etc:

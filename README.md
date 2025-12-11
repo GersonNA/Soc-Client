@@ -1,21 +1,42 @@
-# SOC Client
+# SOC Client Hub
 
-Agent client per connectar a SOC Central amb WireGuard VPN, Wazuh Agent i Zabbix Agent.
+**Agregador local (hub) per sucursals** que rep dades d'agents locals i les reenvia al SOC Central.
 
-## Descripció
+## Arquitectura Hub-and-Spoke
 
-Aquest projecte desplega un client SOC que es connecta al servidor central mitjançant VPN WireGuard i envia dades de monitorització i seguretat.
+Aquest sistema funciona com a **punt d'agregació local** per una sucursal:
+
+```
+Sucursal (192.168.240.0/24)
+├── PCs amb agents
+│   ├── Wazuh Agent → envia a 192.168.240.12:1514
+│   └── Zabbix Agent → envia a 192.168.240.12:10051
+│
+└── SOC Client Hub (192.168.240.12)
+    ├── Wazuh Manager Local (rep agents locals)
+    ├── Zabbix Proxy (rep agents locals)
+    └── WireGuard VPN
+        └── Reenvia al SOC Central (10.0.0.1)
+```
 
 **Components:**
 - **WireGuard Client**: Connexió VPN segura al SOC Central
-- **Wazuh Agent**: Monitorització de seguretat (SIEM)
-- **Zabbix Agent**: Monitorització d'infraestructura
+- **Zabbix Proxy**: Agregador local d'agents Zabbix (reenvia al Server central)
+- **Wazuh Manager**: Manager local d'agents Wazuh (indexa localment)
+- **Wazuh Indexer**: OpenSearch local per logs
+- **Wazuh Dashboard**: Interface web local (opcional)
 
 ## Requisits Previs
 
-- Docker i Docker Compose instal·lats
-- Configuració WireGuard del servidor central (fitxer .conf)
-- Accés al SOC Central per VPN
+- **Sistema operatiu**: Ubuntu/Debian 20.04+ o similar
+- **Recursos mínims**:
+  - RAM: 8 GB (recomanat 16 GB)
+  - CPU: 4 cores
+  - Disc: 50 GB lliures
+- **Docker**: v20.10+
+- **Docker Compose**: v2.0+
+- **Configuració WireGuard** del servidor central (fitxer .conf)
+- **Port 51820/udp** obert per WireGuard
 
 ## Instal·lació
 
@@ -23,7 +44,7 @@ Aquest projecte desplega un client SOC que es connecta al servidor central mitja
 
 ```bash
 cd /opt
-sudo git clone git@github.com:GersonNA/Soc-Client.git soc-client
+sudo git clone https://github.com/GersonNA/Soc-Client.git soc-client
 sudo chown -R $USER:$USER soc-client
 cd soc-client
 ```
@@ -35,225 +56,290 @@ cp .env.example .env
 nano .env
 ```
 
-Edita les variables segons la teva configuració:
-- `WAZUH_AGENT_NAME`: Nom identificatiu del client
-- `ZABBIX_AGENT_HOSTNAME`: Hostname per Zabbix
-- Les IPs ja estan configurades per VPN (10.0.0.1)
+Edita les variables:
+- `ZABBIX_PROXY_HOSTNAME`: Nom identificatiu del proxy (ex: soc-client-proxy-01)
+- `ZABBIX_SERVER`: IP del Zabbix Server central (normalment 10.0.0.1)
+- `WAZUH_*_PASSWORD`: Passwords per Wazuh (canvia-les per seguretat!)
 
 ### 3. Configurar WireGuard
 
-Copia el fitxer de configuració WireGuard proporcionat pel servidor central:
+Copia la configuració WireGuard del servidor central:
 
 ```bash
-# Crear directori wireguard
 mkdir -p config/wireguard
-
-# Opció 1: Copiar fitxer .conf directament
+# Copiar fitxer .conf proporcionat pel central
 cp /path/to/wireguard-client.conf config/wireguard/wg0.conf
 chmod 600 config/wireguard/wg0.conf
-
-# Opció 2: Crear manualment amb la configuració proporcionada
-nano config/wireguard/wg0.conf
 ```
 
-**NOTA IMPORTANT**: El contenidor WireGuard crea automàticament subdirectoris dins de `config/wireguard/`. El fitxer de configuració `wg0.conf` ha d'estar a l'arrel de `config/wireguard/` abans d'iniciar els contenidors. Després del primer inici, els fitxers es mouran automàticament a `config/wireguard/wg_confs/`.
+### 4. Generar Certificats Wazuh
 
-Contingut típic del fitxer `wg0.conf`:
+Executa el script per generar certificats SSL:
 
-```ini
-[Interface]
-PrivateKey = [CLAU_PRIVADA_DEL_CLIENT]
-Address = 10.0.0.X/32
-DNS = 10.0.0.1, 8.8.8.8
-
-[Peer]
-PublicKey = [CLAU_PUBLICA_DEL_SERVIDOR]
-Endpoint = soc.aracom.cat:51821
-AllowedIPs = 10.0.0.0/24
-PersistentKeepalive = 25
+```bash
+./scripts/generate-wazuh-certs.sh
 ```
 
-### 4. Iniciar Serveis
+Això crearà els certificats necessaris per:
+- Wazuh Indexer
+- Wazuh Manager
+- Wazuh Dashboard
+
+### 5. Iniciar Serveis
 
 ```bash
 docker compose up -d
-
-# Verificar estat
-docker compose ps
 ```
 
-### 5. Verificar Connectivitat
+Això iniciarà:
+- WireGuard Client (VPN)
+- Zabbix Proxy
+- Wazuh Indexer
+- Wazuh Manager
+- Wazuh Dashboard
 
-**Verificar connexió VPN:**
+### 6. Verificar Estat
+
 ```bash
-# Verificar que WireGuard està connectat
+# Verificar contenidors
+docker compose ps
+
+# Verificar VPN
 docker exec soc-client-wireguard wg show
 
-# Verificar ping al servidor central
+# Ping al central
 docker exec soc-client-wireguard ping -c 3 10.0.0.1
+
+# Logs Zabbix Proxy
+docker logs soc-client-zabbix-proxy --tail 50
+
+# Logs Wazuh Manager
+docker logs soc-client-wazuh-manager --tail 50
 ```
 
-**Verificar Wazuh Agent:**
+## Configuració d'Agents Locals
+
+### Agents Zabbix
+
+Els agents Zabbix dels PCs de la sucursal han de configurar-se per enviar al proxy local:
+
 ```bash
-# Veure logs de l'agent
-docker logs soc-client-wazuh-agent
-
-# Verificar estat
-docker exec soc-client-wazuh-agent /var/ossec/bin/agent-control -l
+# /etc/zabbix/zabbix_agent2.conf
+Server=192.168.240.12
+ServerActive=192.168.240.12:10051
+Hostname=pc-sucursal-01
 ```
 
-**Verificar Zabbix Agent:**
-```bash
-# Veure logs
-docker logs soc-client-zabbix-agent
+El Zabbix Proxy automàticament reenvia les dades al Server central (10.0.0.1) via VPN.
 
-# Test de connexió
-docker exec soc-client-zabbix-agent zabbix_agentd -t agent.ping
+### Agents Wazuh
+
+Els agents Wazuh dels PCs han de configurar-se per enviar al Manager local:
+
+```xml
+<!-- /var/ossec/etc/ossec.conf -->
+<client>
+  <server>
+    <address>192.168.240.12</address>
+    <port>1514</port>
+    <protocol>tcp</protocol>
+  </server>
+</client>
 ```
 
-## Arquitectura
+El Wazuh Manager local indexa els logs localment. Per reenvi al central, caldrà configurar **Wazuh Agent** addicional al sistema host o utilitzar **Filebeat** per reenvi.
+
+## Accés als Serveis
+
+### Dashboard Local
+
+Pots accedir al Wazuh Dashboard local des de qualsevol PC de la sucursal:
 
 ```
-┌─────────────────────────────────────────────┐
-│           SOC Client (Sucursal)             │
-│                                             │
-│  ┌────────────┐  ┌────────────┐            │
-│  │   Wazuh    │  │  Zabbix    │            │
-│  │   Agent    │  │  Agent     │            │
-│  └─────┬──────┘  └─────┬──────┘            │
-│        │               │                    │
-│        └───────┬───────┘                    │
-│                │                            │
-│        ┌───────▼───────┐                    │
-│        │  WireGuard    │                    │
-│        │    Client     │                    │
-│        └───────┬───────┘                    │
-│                │                            │
-└────────────────┼────────────────────────────┘
-                 │ VPN (10.0.0.0/24)
-                 │
-        ┌────────▼─────────┐
-        │   Internet       │
-        └────────┬─────────┘
-                 │
-┌────────────────▼────────────────────────────┐
-│           SOC Central Server                │
-│                                             │
-│  ┌────────────┐  ┌────────────┐            │
-│  │   Wazuh    │  │  Zabbix    │            │
-│  │  Manager   │  │  Server    │            │
-│  └────────────┘  └────────────┘            │
-│                                             │
-│         ┌────────────┐                      │
-│         │ WireGuard  │                      │
-│         │  Server    │                      │
-│         └────────────┘                      │
-└─────────────────────────────────────────────┘
+https://192.168.240.12
 ```
 
-## Flux de Dades
+Credencials per defecte:
+- **Username**: admin
+- **Password**: admin (canvia-la després del primer login!)
 
-1. **WireGuard**: Estableix túnel VPN segur amb el servidor central
-2. **Wazuh Agent**: Envia logs i events de seguretat al Wazuh Manager (port 1514)
-3. **Zabbix Agent**: Envia mètriques al Zabbix Server (port 10051)
+### Des de fora la sucursal
 
-## Scripts Auxiliars
+Si vols accedir des del SOC Central:
 
-### Restart Complet
-```bash
-./scripts/restart.sh
-```
+1. Connecta't a la VPN WireGuard
+2. Accedeix a `https://10.0.0.10` (IP VPN del client)
 
-### Veure Logs
-```bash
-./scripts/logs.sh [wireguard|wazuh|zabbix]
-```
+## Ports Exposats
 
-### Health Check
-```bash
-./scripts/health-check.sh
-```
+Ports accessibles des de la xarxa local 192.168.240.0/24:
 
-## Troubleshooting
-
-### WireGuard no connecta
-
-1. Verificar configuració:
-   ```bash
-   cat config/wireguard/wg0.conf
-   ```
-
-2. Verificar logs:
-   ```bash
-   docker logs soc-client-wireguard
-   ```
-
-3. Verificar que el port UDP 51821 està obert al firewall del servidor
-
-### Wazuh Agent no envia dades
-
-1. Verificar connectivitat al manager:
-   ```bash
-   docker exec soc-client-wireguard ping -c 3 10.0.0.1
-   docker exec soc-client-wireguard nc -zv 10.0.0.1 1514
-   ```
-
-2. Verificar clau de registre:
-   ```bash
-   docker logs soc-client-wazuh-agent | grep -i "connected\|error"
-   ```
-
-3. Al servidor central, verificar que l'agent està registrat:
-   ```bash
-   docker exec soc-central-wazuh.manager-1 /var/ossec/bin/agent_control -l
-   ```
-
-### Zabbix Agent no apareix al servidor
-
-1. Verificar connectivitat:
-   ```bash
-   docker exec soc-client-wireguard ping -c 3 10.0.0.1
-   docker exec soc-client-wireguard nc -zv 10.0.0.1 10051
-   ```
-
-2. Verificar hostname configurat:
-   ```bash
-   docker exec soc-client-zabbix-agent cat /etc/zabbix/zabbix_agentd.conf | grep Hostname
-   ```
-
-3. Al servidor Zabbix, afegir l'host manualment si cal
+| Port | Servei | Descripció |
+|------|--------|------------|
+| 1514 | Wazuh Manager | Recepció agents Wazuh (TCP) |
+| 1515 | Wazuh Manager | Enrollment agents (TCP) |
+| 10051 | Zabbix Proxy | Recepció agents Zabbix |
+| 55000 | Wazuh API | API REST |
+| 443 | Wazuh Dashboard | Interface web HTTPS |
 
 ## Manteniment
 
-### Actualitzar Contenidors
+### Actualitzar Imatges
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-### Backup Configuració
+### Backup
+
+Backup de dades importants:
 
 ```bash
-tar -czf soc-client-backup-$(date +%Y%m%d).tar.gz config/ .env
+# Backup Zabbix Proxy
+docker run --rm -v soc-client_zabbix-proxy-data:/data -v $(pwd):/backup alpine tar czf /backup/zabbix-proxy-backup.tar.gz /data
+
+# Backup Wazuh
+docker run --rm -v soc-client_wazuh-manager-data:/data -v $(pwd):/backup alpine tar czf /backup/wazuh-backup.tar.gz /data
 ```
 
-### Eliminar Tot
+### Logs
 
 ```bash
+# Veure logs de tots els serveis
+docker compose logs -f
+
+# Logs d'un servei específic
+docker compose logs -f wazuh-manager
+docker compose logs -f zabbix-proxy
+```
+
+## Troubleshooting
+
+### VPN no connecta
+
+```bash
+# Verificar configuració
+docker exec soc-client-wireguard cat /config/wg_confs/wg0.conf
+
+# Reiniciar WireGuard
+docker restart soc-client-wireguard
+
+# Verificar peer
+docker exec soc-client-wireguard wg show
+```
+
+### Zabbix Proxy no reenvia dades
+
+```bash
+# Verificar connexió al Server central
+docker exec soc-client-zabbix-proxy nc -zv 10.0.0.1 10051
+
+# Logs detallats
+docker logs soc-client-zabbix-proxy --tail 100
+```
+
+### Wazuh Manager no rep agents
+
+```bash
+# Verificar que el port està obert
+netstat -tulpn | grep 1514
+
+# Verificar agents registrats
+docker exec soc-client-wazuh-manager /var/ossec/bin/agent_control -l
+
+# Logs Manager
+docker logs soc-client-wazuh-manager --tail 100
+```
+
+### Wazuh Dashboard no carrega
+
+```bash
+# Verificar que Indexer està Up
+docker ps | grep wazuh-indexer
+
+# Logs Dashboard
+docker logs soc-client-wazuh-dashboard --tail 50
+
+# Logs Indexer
+docker logs soc-client-wazuh-indexer --tail 50
+```
+
+## Eliminar Instal·lació
+
+```bash
+# Aturar i eliminar contenidors
+docker compose down
+
+# Eliminar volums (ATENCIÓ: això esborra totes les dades!)
 docker compose down -v
+
+# Eliminar directori
+cd /opt
+sudo rm -rf soc-client
 ```
 
-## Seguretat
+## Arquitectura Detallada
 
-- Les claus privades WireGuard s'han de mantenir segures (permisos 600)
-- No compartir el fitxer .env (conté configuració sensible)
-- Assegurar que només el tràfic VPN pot accedir als serveis
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Sucursal 192.168.240.0/24                                   │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  PCs amb Agents                                              │
+│  ├─ Wazuh Agent ────────┐                                   │
+│  └─ Zabbix Agent ───────┼────────┐                          │
+│                         │        │                          │
+│                         ▼        ▼                          │
+│  ┌──────────────────────────────────────────┐               │
+│  │ SOC Client Hub (192.168.240.12)         │               │
+│  ├──────────────────────────────────────────┤               │
+│  │                                          │               │
+│  │  ┌─────────────┐    ┌──────────────┐    │               │
+│  │  │ Wazuh       │    │ Zabbix Proxy │    │               │
+│  │  │ Manager     │    │              │    │               │
+│  │  │ :1514       │    │ :10051       │    │               │
+│  │  └──────┬──────┘    └──────┬───────┘    │               │
+│  │         │                  │            │               │
+│  │         ▼                  │            │               │
+│  │  ┌─────────────┐           │            │               │
+│  │  │ Wazuh       │           │            │               │
+│  │  │ Indexer     │           │            │               │
+│  │  │ (OpenSearch)│           │            │               │
+│  │  └─────────────┘           │            │               │
+│  │                            │            │               │
+│  │  ┌──────────────────────────┴───┐       │               │
+│  │  │ WireGuard Client             │       │               │
+│  │  │ IP VPN: 10.0.0.10            │       │               │
+│  │  └──────────────┬───────────────┘       │               │
+│  └─────────────────┼─────────────────────────┘               │
+│                    │ Túnel VPN                              │
+└────────────────────┼────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────┐
+│ SOC Central (soc.aracom.cat)                                │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌──────────────┐    ┌─────────────┐                       │
+│  │ Wazuh        │    │ Zabbix      │                       │
+│  │ Manager      │    │ Server      │                       │
+│  │ :1514        │    │ :10051      │                       │
+│  └──────────────┘    └─────────────┘                       │
+│                                                              │
+│  Dashboards Centralitzats                                   │
+│  └─ Visualització de totes les sucursals                    │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ## Suport
 
-Per problemes o consultes, contactar amb l'equip SOC Central.
+Per problemes o preguntes:
+- GitHub Issues: https://github.com/GersonNA/Soc-Client/issues
+- Documentació Wazuh: https://documentation.wazuh.com/
+- Documentació Zabbix: https://www.zabbix.com/documentation
 
-## Llicència
+---
 
-Propietari - ARACOM CLOUD SERVICES SLU
+**Nota**: Aquest és un sistema Hub local. Cada sucursal té el seu propi hub que agrega dades i les reenvia al central. Això permet monitorització local i resiliència si la connexió al central falla temporalment.
