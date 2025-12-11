@@ -23,26 +23,6 @@ services:
       - soc-client-net
 
   # ═══════════════════════════════════════════════════════
-  # WAZUH AGENT - Monitorització seguretat
-  # ═══════════════════════════════════════════════════════
-  wazuh-agent:
-    image: wazuh/wazuh-agent:4.14.1
-    container_name: soc-client-wazuh-agent
-    environment:
-      - WAZUH_MANAGER=${WAZUH_MANAGER:-10.0.0.1}
-      - WAZUH_MANAGER_PORT=${WAZUH_MANAGER_PORT:-1514}
-      - WAZUH_PROTOCOL=${WAZUH_PROTOCOL:-tcp}
-      - WAZUH_AGENT_NAME=${WAZUH_AGENT_NAME:-soc-client}
-      - WAZUH_AGENT_GROUP=${WAZUH_AGENT_GROUP:-default}
-    volumes:
-      - /var/log:/host/var/log:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    restart: unless-stopped
-    depends_on:
-      - wireguard
-    network_mode: "service:wireguard"
-
-  # ═══════════════════════════════════════════════════════
   # ZABBIX AGENT - Monitorització infraestructura
   # ═══════════════════════════════════════════════════════
   zabbix-agent:
