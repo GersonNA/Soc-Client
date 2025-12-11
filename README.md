@@ -45,6 +45,9 @@ Edita les variables segons la teva configuració:
 Copia el fitxer de configuració WireGuard proporcionat pel servidor central:
 
 ```bash
+# Crear directori wireguard
+mkdir -p config/wireguard
+
 # Opció 1: Copiar fitxer .conf directament
 cp /path/to/wireguard-client.conf config/wireguard/wg0.conf
 chmod 600 config/wireguard/wg0.conf
@@ -52,6 +55,8 @@ chmod 600 config/wireguard/wg0.conf
 # Opció 2: Crear manualment amb la configuració proporcionada
 nano config/wireguard/wg0.conf
 ```
+
+**NOTA IMPORTANT**: El contenidor WireGuard crea automàticament subdirectoris dins de `config/wireguard/`. El fitxer de configuració `wg0.conf` ha d'estar a l'arrel de `config/wireguard/` abans d'iniciar els contenidors. Després del primer inici, els fitxers es mouran automàticament a `config/wireguard/wg_confs/`.
 
 Contingut típic del fitxer `wg0.conf`:
 

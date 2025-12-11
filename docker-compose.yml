@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ═══════════════════════════════════════════════════════
   # WIREGUARD CLIENT - VPN al SOC Central
@@ -30,15 +28,13 @@ services:
   wazuh-agent:
     image: wazuh/wazuh-agent:4.14.1
     container_name: soc-client-wazuh-agent
-    hostname: ${WAZUH_AGENT_NAME:-soc-client}
     environment:
-      - WAZUH_MANAGER=${WAZUH_MANAGER_IP:-10.0.0.1}
+      - WAZUH_MANAGER=${WAZUH_MANAGER:-10.0.0.1}
       - WAZUH_MANAGER_PORT=${WAZUH_MANAGER_PORT:-1514}
       - WAZUH_PROTOCOL=${WAZUH_PROTOCOL:-tcp}
       - WAZUH_AGENT_NAME=${WAZUH_AGENT_NAME:-soc-client}
       - WAZUH_AGENT_GROUP=${WAZUH_AGENT_GROUP:-default}
     volumes:
-      - ./config/wazuh:/var/ossec/etc
       - /var/log:/host/var/log:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: unless-stopped
@@ -52,16 +48,14 @@ services:
   zabbix-agent:
     image: zabbix/zabbix-agent2:alpine-7.0-latest
     container_name: soc-client-zabbix-agent
-    hostname: ${ZABBIX_AGENT_HOSTNAME:-soc-client}
     environment:
       - ZBX_HOSTNAME=${ZABBIX_AGENT_HOSTNAME:-soc-client}
-      - ZBX_SERVER_HOST=${ZABBIX_SERVER_IP:-10.0.0.1}
+      - ZBX_SERVER_HOST=${ZABBIX_SERVER:-10.0.0.1}
       - ZBX_SERVER_PORT=${ZABBIX_SERVER_PORT:-10051}
       - ZBX_PASSIVE_ALLOW=${ZABBIX_PASSIVE_ALLOW:-true}
       - ZBX_ACTIVE_ALLOW=${ZABBIX_ACTIVE_ALLOW:-true}
       - ZBX_TIMEOUT=${ZABBIX_TIMEOUT:-30}
     volumes:
-      - ./config/zabbix:/etc/zabbix
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /:/hostfs:ro
     privileged: true
