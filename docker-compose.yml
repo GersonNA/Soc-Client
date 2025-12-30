@@ -6,15 +6,12 @@ services:
       - NET_ADMIN
       - SYS_MODULE
     volumes:
-      # A linuxserver/wireguard se li munta la configuraciÃ³ a /config
       - ./config/wireguard:/config
       - /lib/modules:/lib/modules:ro
     ports:
-      # Ports for Wazuh
       - "1514:1514"
       - "1515:1515"
       - "55000:55000"
-      # Port for Zabbix
       - "10050:10050"
     sysctls:
       - net.ipv4.conf.all.src_valid_mark=1
@@ -27,6 +24,7 @@ services:
     restart: always
     volumes:
       - ./config/wazuh/ossec.conf:/var/ossec/etc/ossec.conf:ro
+      - ./logs/suricata:/var/log/suricata:ro
       - wazuh_etc:/var/ossec/etc
       - wazuh_logs:/var/ossec/logs
       - wazuh_queue:/var/ossec/queue
@@ -38,7 +36,7 @@ services:
     image: zabbix/zabbix-proxy-sqlite3:alpine-7.0-latest
     container_name: soc-client-zabbix-proxy
     environment:
-      - ZBX_SERVER_HOST=10.0.0.1 
+      - ZBX_SERVER_HOST=10.0.0.1
       - ZBX_SERVER_PORT=10051
       - ZBX_HOSTNAME=soc-client-01
     volumes:
@@ -47,6 +45,20 @@ services:
     depends_on:
       - wireguard
     network_mode: "service:wireguard"
+
+  suricata:
+    image: jasonish/suricata:latest
+    container_name: soc-client-suricata
+    restart: always
+    network_mode: "host"
+    cap_add:
+      - NET_ADMIN
+      - SYS_NICE
+      - NET_RAW
+    volumes:
+      - ./logs/suricata:/var/log/suricata
+      - ./config/suricata:/etc/suricata
+    command: -i eth0
 
 volumes:
   wazuh_etc:
